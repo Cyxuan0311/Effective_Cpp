@@ -1,0 +1,5 @@
+#don't trans-pdf file
+*.exe
+*.cpp
+*.dll
+
