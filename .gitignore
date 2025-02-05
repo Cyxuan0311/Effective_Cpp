@@ -1,4 +1,4 @@
-#don't trans-pdf file
+#don't trans file
 *.exe
 *.cpp
 *.dll

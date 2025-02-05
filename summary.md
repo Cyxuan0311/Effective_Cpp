@@ -26,7 +26,7 @@ const在函数前的声明可以避免一些非法操作。
 在类中我们重载const与non-const的operator函数时，容易遇到重复的代码，我们要做的就是实现operator的功能并使用两次。
 我们可以通过**常量性消除（casting away constness）**，只需要在non-const函数中使用const_cast、static_cast来转换（转型动作）。
 
-[!总结：](image\const.png)
+[!总结：](https://github.com/Cyxuan0311/Effective_Cpp/blob/master/image/const.png)
 
 ### 4、确保对象被使用前已被初始化：
 在类中，通常我们使用**列表初始化**的效率会高于函数内部的初始化。同时我们使用，即class的成员变量总是以声明的次序被初始化，所以我们进行初始化的过程中要保证变量的初始顺序与声明顺序一致。
