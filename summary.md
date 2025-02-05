@@ -1251,3 +1251,202 @@ private继承，例如class D以private继承class B，用意就是采用class B
     }
 
 ### 44、将与参数无关的代码抽离template:
+主要是会让编译器编译出很长的臃肿的二进制码，所以要把参数抽离，看以下代码：
+举一个例子：
+
+    template<typename T,std::size_t n>
+    class SquareMatrix{
+        public:
+            ...
+            void invert();  //求逆矩阵
+    }；
+    SquareMatrix<double,5> sml;
+    sml.invert();
+    SquareMatrix<double,10> smy;
+    smy.invert();
+由于代码的重复，就会导致代码暴涨。
+
+所以我们可以编写一个带数值参数的函数：
+
+    template<typename T>
+    class SquareMatrixBase{
+        protected:
+            ...
+            void invert(std::size_t matrixSize);
+            ...
+    };
+    template<typename T,std::size_t n>
+    class SquareMatrix:private SquareMatrixBase<T>{
+        private:
+            using SquareMatrixBase<T>::invert;  //避免base版的invert。
+        public:
+            ...
+            void invert(){
+                this->invert(n);    //制造一个inline的调用。
+            }
+    };
+当然因为矩阵数据可能会不一样，例如5x5的矩阵和10x10的矩阵计算方式会不一样，输入的矩阵数据也会不一样，采用指针指向矩阵数据的方法会比较好：
+
+    template<typename T>
+    class SquareMatrixBase{
+        protected:
+            SquareMatrixBase(std::size_t n,T* pMem):size(n),pData(pMem){ }
+            void setDataPtr(T* ptr){pData=ptr;}
+            ...
+        private:
+            std::size_t size;
+            T* pData;
+    };
+
+    template<typename T,std::size_t n>
+    class SquareMatrix:private SquareMatrixBase<T>{
+        public:
+            SquareMatrix():SquareMatrixBase<T>(n,data){ }
+            ...
+        private:
+            T data[n*n];
+    };
+
+总结：
+- templates生成多个classes和多个函数，所以任何template代码都不该与某个造成膨胀的template参数产生依赖关系。
+- 因非类型模板参数（non-type template parameters）而造成的代码膨胀，往往可以消除，做法是以函数参数后者class成员变量替换template参数。
+- 因类型参数（type parameters）而造成的代码膨胀，往往可以降低，做法是让带有完全相同的二进制表述的具现类型，共享实现码。
+  
+### 45、运用成员函数模板接受所有兼容类型：
+
+考虑以下代码：
+
+    template<typename T>
+    class SmartPtr{
+        public:
+            explicit SmartPtr(T *realPtr);
+            ... 
+    };
+    SmartPtr<Top> pt1=SmartPtr<Middle>(new Middle);     //将SmartPtr<Middle>转化为SmartPtr<Top>
+    SmartPtr<Top> pt2=SmartPtr<Botttom>(new Bottom);    //将SmartPtr<Bottom>转化为SmartPtr<Top>
+    SmartPtr<const Top> pct2=pt1;   //将SmartPtr<Top>转化为SmartPtr<const Top>
+编译的M与T完全为不同的模板。
+由于我们的关注点在于如何smart指针的构造函数，但由于我们所需要的数量没有止境。
+我们可以编写一个构造模板：
+
+    template<typename T>
+    class SmartPtr{
+        public:
+            template<typename U>
+            SmartPtr(const SmartPtr<U>& other); //copy函数。
+            ...
+    };
+    以上代码的意思为：可以由类型T生成类型U的智能指针。
+
+但由于我们只想将B->T,而不是T->B。
+我们可以考虑：
+
+    template<typename T>
+    class SmartPtr{
+        public:
+            template<typename U>
+            SmartPtr(const SmartPtr<U>& other)  //为了生成copy构造函数
+            :heldPtr(other.get()){....}
+                T* get() const { return heldPtr; }
+        private:
+            T* heldPtr;                        //这个SmartPtr持有的内置原始指针
+    };
+
+总结：
+- 使用成员函数模板生成“可接受所有兼容类型”的函数。
+- 如果还想泛化copy构造函数、操作符重载等，同样需要在前面加上template。
+
+### 46、需要类型转换时请为模板定义非成员函数：
+考虑以下代码：
+
+    template<typename T>
+    class Rational{
+        public:
+            Rational(const T& numberator=0,const T& denominator=1);
+            const T numerator() const;
+            const T denominator() const;
+            ...
+    };
+    template<typename T>
+    const Rational<T> operator*(const Rational<T> &lhs,const Rational<T> &rhs){...}
+
+像第24条一样，当我们进行混合类型算术运算的时候，会出现编译通过不了的情况
+
+    template<typename T>
+    const Rational<T> operator* (const Rational<T>& lhs, const Rational<T>& rhs){....}
+
+    Rational<int> oneHalf(1, 2);
+    Rational<int> result = oneHalf * 2; //错误，无法通过编译
+
+解决方法：使用friend声明一个函数,进行混合式调用
+
+    template<typename T>
+    class Rational{
+        public:
+            friend const Rational operator*(const Rational& lhs, const Rational& rhs){
+                return Rational(lhs.numerator()*rhs.numerator(), lhs.denominator() * rhs.denominator());
+            }
+    };
+    template<typename T>
+    const Rational<T> operator*(const Rational<T>& lhs, const Rational<T>&rhs){....}
+总结：
+- 当我们编写一个class template， 而他所提供的“与此template相关的”函数支持所有参数隐形类型转换时，请将那些函数定义为classtemplate内部的friend函数。
+
+### 47、请使用trait class表现类型信息：
+traits是一种允许你在编译期间取得某些类型信息的技术，或者受是一种协议。这个技术的要求之一是：他对内置类型和用户自定义类型的表现必须是一样的。
+
+    template<typename T>
+    struct iterator_traits;  //迭代器分类的相关信息
+    //iterator_traits的运作方式是，针对某一个类型IterT，在struct iterator_traits<IterT>内一定声明//某个typedef名为iterator_category。这个typedef 用来确认IterT的迭代器分类
+    一个针对deque迭代器而设计的class大概是这样的
+    template<....>
+    class deque{
+        public:
+        class iterator{
+            public:
+            typedef random_access_iterator_tag iterator_category;
+        }
+    }
+    对于用户自定义的iterator_traits，就是有一种“IterT说它自己是什么”的意思
+    template<typename IterT>
+    struct iterator_traits{
+    typedef typename IterT::iterator_category iterator_category;
+    }
+    //iterator_traits为指针指定的迭代器类型是：
+    template<typename IterT>
+    struct iterator_traits<IterT*>{
+        typedef random_access_iterator_tag iterator_category;
+    }
+综上所述，设计并实现一个traits class：
+- 确认若干你希望将来可取得的类型相关信息，例如对迭代器而言，我们希望将来可取得其分类.
+- 为该信息选择一个名称（例如iterator_category）.
+- 提供一个template和一组特化版本(例如iterator_traits)，内含你希望支持的类型相关信息.
+  
+在设计实现一个traits class以后，我们就需要使用这个    
+
+    traits class：
+
+    template<typename IterT, typename DistT>
+    void doAdvance(IterT& iter, DistT d, std::random_access_iterator_tag){ iter += d; }//用于实现random access迭代器
+    template<typename IterT, typename DistT>
+    void doAdvance(IterT& iter, DistT d, std::bidirectional_iterator_tag){ //用于实现bidirectional迭代器
+        if(d >=0){
+            while(d--)
+                ++iter;
+        }
+        else{
+            while(d++)
+                --iter;
+        }
+    }
+
+    template<typename IterT, typename DistT>
+    void advance(IterT& iter, DistT d){
+        doAdvance(iter, d, typename std::iterator_traits<IterT>::iterator_category());
+    }
+
+使用一个traits class:
+- 建立一组重载函数（像劳工）或者函数模板（例如doAdvance），彼此间的差异只在于各自的traits参数，令每个函数实现码与其接受traits信息相应.
+- 建立一个控制函数（像工头）或者函数模板（例如advance），用于调用上述重载函数并且传递traits class所提供的信息.
+
+### 48、认识template元编程:
