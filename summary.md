@@ -1,3 +1,13 @@
+class Transaction{
+    public:
+        Transaction();
+        virtual void logTransaction() const=0;//因为类型的不同。
+        ...
+};
+Transaction::Transaction(){
+    ...
+    logTransaction();   //最后的动作是记下这笔交易。
+}
 ## Chapter_one
 
 ### 1、视C++为一个语言集合：
@@ -1450,3 +1460,166 @@ traits是一种允许你在编译期间取得某些类型信息的技术，或�
 - 建立一个控制函数（像工头）或者函数模板（例如advance），用于调用上述重载函数并且传递traits class所提供的信息.
 
 ### 48、认识template元编程:
+模板元编程（TMP）是编写template-based C++程序并执行于编译期的过程。
+TMP编译可以将工作从运行期转到编译期。
+
+现在我们引进一个代码：
+
+    template<typename IterT,typename DistT>
+    void advance(IterT &iter,DistT d){
+        if(iter is a random access iterator){
+            iter+=d;
+        }else{
+            if(d>=0){
+                while(d--)
+                    ++iter;
+            }else{
+                while(d++)
+                    --iter;
+            }
+        }
+    }
+其中我们可以使用typeid来进行类型比较，从而让**iter is a random access iterator**成立。
+
+让我们再加一个例子：
+
+    使用TMP计算阶乘：
+    template<unsigned n>
+    struct Factorial{
+        enum{value=n*Factorial<n-1>::value};
+    };
+    //特殊情况
+    template<>
+    struct Factorial<0>{
+        enum{value=1;}
+    };
+    明显的是，程序在编译期计算阶乘。
+
+总结：
+- TMP(模板元编程)可将工作从运行期转到编译期，从而实现早期错误检测与更高的效率。
+
+## Chapter_eight
+
+### 49、了解new-handler的行为：
+
+当new无法申请到新的内存的时候，会不断的调用new-handler，直到找到足够的内存,new_handler是一个错误处理函数：
+
+    namespace std{
+        typedef void(*new_handler)();
+        new_handler set_new_handler(new_handler p) throw();
+    }
+一个设计良好的new-handler要做下面的事情：
+- 让更多内存可以被使用.
+- 安装另一个new-handler，如果目前这个new-handler无法取得更多可用内存，或许他知道另外哪个new-handler有这个能力，然后用那个new-handler替换自己
+- 卸除new-handler
+- 抛出bad_alloc的异常
+- 不返回，调用abort或者exit
+  
+new-handler无法给每个class进行定制，但是可以重写new运算符，设计出自己的new-handler
+此时这个new应该类似于下面的实现方式：
+
+    void* Widget::operator new(std::size_t size) throw(std::bad_alloc){
+        NewHandlerHolder h(std::set_new_handler(currentHandler));      // 安装Widget的new-handler
+        return ::operator new(size);                                   //分配内存或者抛出异常，恢复global new-handler
+    }
+总结：
+- set_new_handler允许客户制定一个函数，在内存分配无法获得满足时被调用。
+- Nothrow new是一个没什么用的东西。
+
+### 50、了解new和delete的合理替换时机：
+
+为什么要替换编译器提供的operator new和operator delete？
+- 用来检查运行上的错误。
+- 为了强化效能。
+- 为了收集使用上的统计数据。
+
+写一个定制型operator new
+
+    static const int signature=0xDEADBEEF;
+    typedef unsigned char Byte;
+    //这段代码还有一些问题，如下：
+    void* operator new(std::size_t size) throw(std::bad_alloc){
+        using namespace std;
+        size_t realsize=size+2*sizeof(int); //增加大小，使能够塞入两个signature.
+
+        void* pMem=malloc(realSize);
+        if(!pMem)
+            throw bad_alloc();
+        *(static_cast<int*>(pMem))=signature;
+        *(reinterpret_cast<int*>(static_cast<Byte*>(pMem)+realSize-sizeof(int)))=signture;
+
+        return static_cast<Byte*>(pMem)+sizeof(int);
+    }
+
+这个operator new的缺点主要在于它疏忽了身为这个特殊函数所应该的具有的“坚持C++规矩”的态度。
+
+**字节对齐：**
+参考链接：
+    [链接](Txtfile\字节对齐.txt)
+
+- 用来检测运用上的错误，如果new的内存delete的时候失败掉了就会导致内存泄漏，定制的时候可以进行检测和定位对应的失败位置
+- 为了强化效率（传统的new是为了适应各种不同需求而制作的，所以效率上就很中庸）
+- 可以收集使用上的统计数据
+- 为了增加分配和归还内存的速度
+- 为了降低缺省内存管理器带来的空间额外开销
+- 为了弥补缺省分配器中的非最佳对齐位
+- 为了将相关对象成簇集中起来
+  
+总结：
+- 有许多理由需要写个自定德new和delete,包括改善效能、对heap运用mistakes进行调试、搜集heap使用信息。
+  
+### 51、编写new和delete时需固守成规：
+operator new的返回值很简单，如果分配成功，返回一个指针，指向一块足够大的内存，如果分配失败，返回bad_alloc。但是也不是这么简单，operator new实际上会多次尝试调用new-handing函数。其中当指向new-handing函数的指针是null,operator new才会抛出异常。
+
+    考虑以下的operator new伪码：
+    void* operator new(std::size_t size) throw(std::bad_alloc){
+        using namespace std;
+        if(size==0)
+            size=1;
+        while(true){
+            尝试分配 size bytes;
+            if(分配成功)
+                return (一个指针，指向分配得来的内存);
+            //分配失败：找出目前的new-handler函数(如果有的话)
+            new_handler globalHandler=set_new_handler(0);
+            set_new_handler(globalHandler);
+            if(globalHandler)
+                (*globalHandler)();
+            else
+                throw bad_alloc();
+        }
+    }
+重写new的时候要保证49条的情况，要能够处理0bytes内存申请等所有意外情况.
+重写delete的时候，要保证删除null指针永远是安全的.
+
+### 52、写了placement new也要写placement delete:
+
+1. **placement new和placement delete的概念**：placement new是一种特殊的`new`表达式，它允许在已分配的内存上构造对象，其语法为`new (place) T(args)`，`place`是指向已分配内存的指针，`T`是要构造的对象类型，`args`是构造函数的参数。与之对应的placement delete，用于在对象析构后释放相关资源，其作用是配合placement new，确保内存管理的完整性。
+2. **写placement delete的必要性**：当使用placement new在特定位置构造对象时，如果构造过程中抛出异常，且没有对应的placement delete，那么已分配的内存可能无法正确释放，从而导致资源泄漏。例如，在一个需要频繁在特定内存区域创建和销毁对象的程序中，如果没有正确配对的placement delete，随着时间的推移，会造成大量内存浪费，最终可能导致程序因内存不足而崩溃。
+3. **placement delete的实现和调用**：placement delete的函数签名通常为`void operator delete(void* ptr, void* place)`，`ptr`是指向要释放内存的指针，`place`是之前placement new中指定的内存位置。编译器会在对象构造失败时自动调用placement delete来释放已分配但未成功构造对象的内存。用户在编写自定义的placement new时，必须同时提供对应的placement delete，以保证内存管理的正确性。
+4. **常见错误及影响**：如果只提供placement new而忽略了placement delete，可能会在异常情况下导致内存泄漏。这不仅会降低程序的性能，还可能引发难以调试的错误，尤其是在长时间运行或对内存要求严格的程序中，这种错误可能会逐渐积累，最终导致系统故障。 
+
+## Chapter_nine:
+
+### 53、不要轻忽编译器的警告：
+- 严肃对待编译器发出的warning， 努力在编译器最高警告级别下无warning
+- 同时不要过度依赖编译器的警告，因为不同的编译器对待事情的态度可能并不相同，换一个编译器警告信息可能就没有了
+
+### 54、让自己熟悉包括TR1在内的标准程序库：
+其实感觉这一条已经有些过时了，不过虽然过时，但是很多地方还是有用的
+
+- smart pointers
+- tr1::function ： 表示任何callable entity（可调用物，只任何函数或者函数对象）
+- tr1::bind是一种stl绑定器
+- Hash tables例如set，multisets， maps等
+- 正则表达式
+- tuples变量组
+- tr1::array：本质是一个STL化的数组
+- tr1::mem_fn:语句构造上与成员函数指针一样的东西
+- tr1::reference_wrapper： 一个让references的行为更像对象的东西
+- 随机数生成工具
+- type traits
+  
+### 55、让自己熟悉Boost:
+
+主要是因为boost是一个C++开发者贡献的程序库，代码相对比较好.

@@ -2,4 +2,7 @@
 *.exe
 *.cpp
 *.dll
+*.json
+*.cpp
+
 
