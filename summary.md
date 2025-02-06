@@ -1,13 +1,3 @@
-class Transaction{
-    public:
-        Transaction();
-        virtual void logTransaction() const=0;//因为类型的不同。
-        ...
-};
-Transaction::Transaction(){
-    ...
-    logTransaction();   //最后的动作是记下这笔交易。
-}
 ## Chapter_one
 
 ### 1、视C++为一个语言集合：
