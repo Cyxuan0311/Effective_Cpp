@@ -4,5 +4,6 @@
 *.dll
 *.json
 *.cpp
-
+#can't trans.
+/Testfile
 
